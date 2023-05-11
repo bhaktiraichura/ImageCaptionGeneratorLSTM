@@ -1,0 +1,56 @@
+name: Image Captioning
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download dataset
+        run: |
+          wget http://nlp.cs.illinois.edu/HockenmaierGroup/Framing_Image_Description/Flickr8k_Dataset.zip -P data
+          wget http://nlp.cs.illinois.edu/HockenmaierGroup/Framing_Image_Description/Flickr8k_text.zip -P data
+          unzip data/Flickr8k_Dataset.zip -d data
+          unzip data/Flickr8k_text.zip -d data
+
+      - name: Preprocess data
+        run: python preprocess.py
+
+      - name: Train model
+        run: python train.py
+
+      - name: Test model
+        run: python test.py
+
+      - name: Evaluate model
+        run: python evaluate.py
+
+      - name: Upload results
+        uses: actions/upload-artifact@v2
+        with:
+          name: Results
+          path: |
+            model.h5
+            tokenizer.pkl
+            test_captions.txt
+            test_results.txt
