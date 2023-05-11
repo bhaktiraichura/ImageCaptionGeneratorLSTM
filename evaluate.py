@@ -1,34 +1,71 @@
-import torch
-import torch.nn.functional as F
+import tensorflow as tf
+from nltk.translate.bleu_score import corpus_bleu
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
+import os
 
-def evaluate(model, data_loader, device):
-    model.eval()
+def evaluate_model(model, tokenizer, data_generator, max_length):
+    """
+    Function to evaluate the trained model on validation set and compute BLEU scores
+    :param model: Trained model to be evaluated
+    :param tokenizer: Tokenizer object to tokenize the captions
+    :param data_generator: Data generator object for the validation set
+    :param max_length: Maximum length of the captions
+    :return: Tuple of BLEU scores for 1 to 4 n-grams
+    """
+    actual, predicted = [], []
+    for batch in data_generator:
+        image_batch, caption_batch = batch[0], batch[1]
+        for idx in range(len(image_batch)):
+            # Generate caption using the model
+            predicted_caption = generate_caption(model, image_batch[idx], tokenizer, max_length)
+            actual_caption = " ".join([tokenizer.index_word[i] for i in caption_batch[idx] if i not in [0]])
+            # Store the actual and predicted captions for the current batch
+            actual.append([actual_caption.split()])
+            predicted.append(predicted_caption.split())
 
-    with torch.no_grad():
-        total_loss = 0
-        total_accuracy = 0
-        num_batches = 0
+    # Compute BLEU scores for 1 to 4 n-grams
+    bleu1 = corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0))
+    bleu2 = corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0))
+    bleu3 = corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0))
+    bleu4 = corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25))
 
-        for batch_idx, (input_seq, target_seq) in enumerate(data_loader):
-            input_seq, target_seq = input_seq.to(device), target_seq.to(device)
+    return bleu1, bleu2, bleu3, bleu4
 
-            # Forward pass
-            output_seq = model(input_seq)
 
-            # Compute loss
-            loss = F.cross_entropy(output_seq.view(-1, output_seq.size(-1)), target_seq.view(-1))
-            total_loss += loss.item()
+def generate_caption(model, image, tokenizer, max_length):
+    """
+    Function to generate caption for a given image using the trained model
+    :param model: Trained model to be used for caption generation
+    :param image: Image for which the caption is to be generated
+    :param tokenizer: Tokenizer object to tokenize the captions
+    :param max_length: Maximum length of the captions
+    :return: Generated caption for the given image
+    """
+    image_tensor = np.expand_dims(image, axis=0)
+    # Generate feature vectors for the image
+    features = model.encoder(image_tensor)
+    # Initialize the decoder input with the start token
+    dec_input = tf.expand_dims([tokenizer.word_index['startseq']], 0)
+    # Initialize the hidden state of the decoder
+    hidden = tf.zeros((1, model.units))
 
-            # Compute accuracy
-            pred = output_seq.argmax(dim=-1)
-            accuracy = torch.mean((pred == target_seq).float())
-            total_accuracy += accuracy.item()
+    result = []
 
-            num_batches += 1
+    for i in range(max_length):
+        # Generate the next word in the caption using the decoder
+        predictions, hidden, _ = model.decoder(dec_input, features, hidden)
+        predicted_id = tf.argmax(predictions[0]).numpy()
+        # If the end token is predicted, stop caption generation
+        if tokenizer.index_word[predicted_id] == 'endseq':
+            break
+        # Append the predicted word to the caption
+        result.append(tokenizer.index_word[predicted_id])
+        # Update the decoder input with the predicted word
+        dec_input = tf.expand_dims([predicted_id], 0)
 
-        avg_loss = total_loss / num_batches
-        avg_accuracy = total_accuracy / num_batches
+    # Join the predicted words to form the caption
+    caption = ' '.join(result)
+    return caption
 
-        print('Evaluation - loss: {:.4f}, accuracy: {:.4f}'.format(avg_loss, avg_accuracy))
-
-        return avg_loss, avg_accuracy
